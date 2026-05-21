@@ -25,6 +25,7 @@ The CLI remains the core. The GUI calls the same public Rust functions.
 Current status:
 
 - shows recorder status and main config values
+- shows the current capture target and recent backend errors
 - Start, Save Replay, Stop, Refresh, Open Clips Folder, Doctor, and Settings call the shared core
 - long-running actions run outside the GTK main thread
 
@@ -33,5 +34,6 @@ TODO before the GUI is considered polished:
 - show the latest 5 clips
 - add capture target controls for fullscreen vs window
 - add select/clear window controls
+- add a preset selector
 - add an easier "copy error details" action
 - add a clearer log viewer inside the GUI

@@ -20,6 +20,7 @@ First-run flow:
 v8q welcome
 v8q setup
 v8q doctor
+v8q doctor --fix-plan
 v8q preset apply beginner-safe --write
 v8q debug wl-screenrec --test-run 5
 ```
@@ -29,7 +30,9 @@ Basic loop:
 ```bash
 v8q start
 v8q save --name first-clip
+v8q save --name first-clip --reveal
 v8q clips
+v8q clips --latest
 v8q stop
 ```
 

@@ -31,7 +31,11 @@ pub enum Command {
     /// Stop the background FFmpeg recorder.
     Stop,
     /// Show recorder and buffer status.
-    Status,
+    Status {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Check local setup for V8Q, FFmpeg, wl-screenrec, PipeWire, and PATH.
     Doctor {
         /// Print machine-readable JSON.
@@ -40,6 +44,9 @@ pub enum Command {
         /// Print detailed checks instead of beginner summary.
         #[arg(long)]
         verbose: bool,
+        /// Print recommended commands without changing anything.
+        #[arg(long)]
+        fix_plan: bool,
     },
     /// Save the configured replay duration as a clip.
     Save {
@@ -52,6 +59,9 @@ pub enum Command {
         /// Open the saved clip.
         #[arg(long)]
         open: bool,
+        /// Reveal the saved clip in the file manager.
+        #[arg(long)]
+        reveal: bool,
         /// Suppress notification.
         #[arg(long)]
         no_notify: bool,
@@ -75,8 +85,11 @@ pub enum Command {
         #[arg(long)]
         backend: Option<String>,
         /// Number of lines to print.
-        #[arg(long, default_value_t = 10)]
+        #[arg(long, alias = "tail", default_value_t = 10)]
         lines: usize,
+        /// Clear V8Q log files without deleting clips.
+        #[arg(long)]
+        clear: bool,
     },
     /// Config file helpers.
     Config {
@@ -176,6 +189,9 @@ pub enum ConfigCommand {
         /// Show resolved/effective config.
         #[arg(long)]
         resolved: bool,
+        /// Print JSON instead of TOML.
+        #[arg(long)]
+        json: bool,
     },
     /// Validate config.
     Validate,
@@ -203,6 +219,9 @@ pub enum ClipCommand {
         path: String,
     },
     Open {
+        path: String,
+    },
+    Reveal {
         path: String,
     },
     Delete {
@@ -260,6 +279,8 @@ pub enum WindowCommand {
         #[arg(long)]
         class: Option<String>,
         #[arg(long)]
+        interactive: bool,
+        #[arg(long)]
         follow: bool,
     },
     Clear,
@@ -268,6 +289,7 @@ pub enum WindowCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum ServiceCommand {
+    Print,
     Install,
     Uninstall,
     Start,
@@ -300,7 +322,8 @@ mod tests {
     use clap::Parser;
 
     use super::{
-        AudioCommand, Cli, Command, ConfigCommand, DebugCommand, ModeCommand, WindowCommand,
+        AudioCommand, Cli, ClipCommand, Command, ConfigCommand, DebugCommand, ModeCommand,
+        ServiceCommand, WindowCommand,
     };
 
     #[test]
@@ -313,6 +336,12 @@ mod tests {
             Cli::try_parse_from(["v8q", "logs"]).unwrap().command,
             Command::Logs { .. }
         ));
+        assert!(matches!(
+            Cli::try_parse_from(["v8q", "status", "--json"])
+                .unwrap()
+                .command,
+            Command::Status { json: true }
+        ));
     }
 
     #[test]
@@ -322,6 +351,14 @@ mod tests {
             cli.command,
             Command::Config {
                 command: ConfigCommand::Path
+            }
+        ));
+
+        let cli = Cli::try_parse_from(["v8q", "config", "show", "--json"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Config {
+                command: ConfigCommand::Show { json: true, .. }
             }
         ));
     }
@@ -341,6 +378,12 @@ mod tests {
 
     #[test]
     fn parses_debug_and_audio_commands() {
+        let cli = Cli::try_parse_from(["v8q", "doctor", "--fix-plan"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Doctor { fix_plan: true, .. }
+        ));
+
         let cli = Cli::try_parse_from(["v8q", "debug", "wl-screenrec", "--test-run", "5"]).unwrap();
         assert!(matches!(
             cli.command,
@@ -373,6 +416,57 @@ mod tests {
             cli.command,
             Command::Window {
                 command: WindowCommand::Select { .. }
+            }
+        ));
+
+        let cli = Cli::try_parse_from(["v8q", "window", "select", "--interactive"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Window {
+                command: WindowCommand::Select {
+                    interactive: true,
+                    ..
+                }
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_save_logs_clip_and_service_v04_flags() {
+        let cli =
+            Cli::try_parse_from(["v8q", "save", "--name", "x", "--reveal", "--json"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Save {
+                reveal: true,
+                json: true,
+                ..
+            }
+        ));
+
+        let cli = Cli::try_parse_from(["v8q", "logs", "--tail", "50", "--clear"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Logs {
+                lines: 50,
+                clear: true,
+                ..
+            }
+        ));
+
+        let cli = Cli::try_parse_from(["v8q", "clip", "reveal", "/tmp/a.mkv"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Clip {
+                command: ClipCommand::Reveal { .. }
+            }
+        ));
+
+        let cli = Cli::try_parse_from(["v8q", "service", "print"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Service {
+                command: ServiceCommand::Print
             }
         ));
     }

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0 - Unreleased
+
+- Improved first-run onboarding with `welcome`, interactive `setup`, and `doctor --fix-plan`.
+- Improved `status` output and added `v8q status --json`.
+- Improved save UX with `--reveal`, structured JSON, unique output names, and clearer backend failure guidance.
+- Improved clip management with richer listings, `ffprobe`-backed `clip info`, and `clip reveal`.
+- Improved window capture UX with `window select --interactive`.
+- Improved logs with `--tail` alias and `--clear`.
+- Improved service management with `v8q service print`.
+- Improved presets and beginner guidance around `beginner-safe`.
+- Improved optional GUI status with capture target and recent errors.
+- Detached `wl-screenrec` into its own process group so `v8q start` behaves like the debug test-run after the CLI exits.
+- Added GitHub issue/debug templates.
+
 ## 0.3.0 - Unreleased
 
 - Added `wl-screenrec --history` backend for Hyprland/Wayland.

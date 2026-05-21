@@ -52,8 +52,8 @@ pub fn status_info(config: &Config) -> anyhow::Result<StatusInfo> {
         _ => None,
     };
     if backend == CaptureBackend::WlScreenrec {
-        if let Some(size) = history_size_bytes {
-            if size > 0 && size < MIN_VALID_HISTORY_BYTES {
+        if let (Some(true), Some(size)) = (history_exists, history_size_bytes) {
+            if size < MIN_VALID_HISTORY_BYTES {
                 warnings.push(format!(
                     "History file exists but is probably not a valid replay yet: size is only {size} bytes."
                 ));
@@ -62,9 +62,29 @@ pub fn status_info(config: &Config) -> anyhow::Result<StatusInfo> {
     }
     let log_tail = if backend == CaptureBackend::WlScreenrec {
         crate::wl_screenrec::tail_log(&crate::wl_screenrec::log_file_path(), 30)
+            .into_iter()
+            .map(|line| strip_ansi(&line))
+            .collect()
     } else {
         Vec::new()
     };
+    let last_error_lines = log_tail
+        .iter()
+        .filter(|line| {
+            line.contains("[ERROR]")
+                || line.contains("ERROR")
+                || line.contains("panic")
+                || line.contains("failed")
+        })
+        .rev()
+        .take(3)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>();
+    let latest_clip = crate::latest_clip(config).ok().flatten();
+    let capture_target = capture_target_summary(config);
 
     Ok(StatusInfo {
         is_running: running_pid.is_some(),
@@ -73,6 +93,9 @@ pub fn status_info(config: &Config) -> anyhow::Result<StatusInfo> {
         config_path: Config::config_file_path()?,
         buffer_dir: buffer_dir.clone(),
         output_dir,
+        latest_clip,
+        detected_preset: crate::preset::detect(config).map(ToString::to_string),
+        capture_target,
         replay_duration: config.recording.duration_seconds,
         segment_duration: config.recording.segment_seconds,
         fps: config.recording.fps,
@@ -90,11 +113,49 @@ pub fn status_info(config: &Config) -> anyhow::Result<StatusInfo> {
         warnings,
         error: None,
         log_tail,
+        last_error_lines,
+        log_file: (backend == CaptureBackend::WlScreenrec).then(crate::wl_screenrec::log_file_path),
         expected_history_file,
         history_exists,
         history_size_bytes,
         history_valid,
     })
+}
+
+fn capture_target_summary(config: &Config) -> String {
+    let window = config.effective_capture_window();
+    if window.enabled {
+        return format!(
+            "window title='{}' class='{}' address='{}' geometry='{}' follow={}",
+            window.title, window.class, window.address, window.geometry, window.follow
+        );
+    }
+    match config.wl_screenrec.capture_mode.as_str() {
+        "geometry" => format!("geometry {}", config.wl_screenrec.geometry),
+        "active-window" | "window" => "active window".to_string(),
+        _ if !config.wl_screenrec.output.trim().is_empty() => {
+            format!("output {}", config.wl_screenrec.output)
+        }
+        _ => "fullscreen/focused output".to_string(),
+    }
+}
+
+pub fn strip_ansi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }
 
 pub fn save(config: &Config) -> anyhow::Result<SaveResult> {
@@ -151,7 +212,7 @@ pub fn save_with_options(config: &Config, options: &SaveOptions) -> anyhow::Resu
         .collect();
 
     let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S");
-    let output_file = output_dir.join(crate::build_clip_filename(options.name.as_deref()));
+    let output_file = unique_output_path(&output_dir, options.name.as_deref());
     let concat_file = buffer_dir.join(format!("concat_{timestamp}.txt"));
     write_concat_file(&concat_file, &selected)?;
 
@@ -215,7 +276,7 @@ fn save_wl_screenrec(config: &Config, options: &SaveOptions) -> anyhow::Result<S
     process::remove_pid_files(&pid_file)?;
     wait_for_stable_file(&history_file, Duration::from_secs(4))?;
 
-    let output_file = output_dir.join(crate::build_clip_filename(options.name.as_deref()));
+    let output_file = unique_output_path(&output_dir, options.name.as_deref());
     move_file(&history_file, &output_file)?;
 
     if let Err(error) = crate::wl_screenrec::start(config) {
@@ -370,7 +431,10 @@ fn wait_for_process_exit(pid: u32, timeout: Duration) -> anyhow::Result<()> {
 }
 
 fn recorder_not_running_error(config: &Config, warnings: &[String]) -> anyhow::Error {
-    let log_tail = crate::wl_screenrec::tail_log(&crate::wl_screenrec::log_file_path(), 100);
+    let log_tail = crate::wl_screenrec::tail_log(&crate::wl_screenrec::log_file_path(), 100)
+        .into_iter()
+        .map(|line| strip_ansi(&line))
+        .collect::<Vec<_>>();
     let warning_text = if warnings.is_empty() {
         "<none>".to_string()
     } else {
@@ -417,7 +481,10 @@ fn wl_screenrec_failure_context(
                 .join("\n")
         })
         .unwrap_or_else(|error| format!("  <failed to list buffer dir: {error}>"));
-    let log_tail = crate::wl_screenrec::tail_log(&crate::wl_screenrec::log_file_path(), 100);
+    let log_tail = crate::wl_screenrec::tail_log(&crate::wl_screenrec::log_file_path(), 100)
+        .into_iter()
+        .map(|line| strip_ansi(&line))
+        .collect::<Vec<_>>();
     format!(
         "wl-screenrec save debug context:\n  pid: {pid}\n  cmdline: {cmdline}\n  expected history file: {}\n  buffer dir: {}\n  process alive: {}\n  warnings: {}\n  buffer listing:\n{}\n  log tail:\n{}\nRecommended actions:\n  - Run `v8q debug wl-screenrec --test-run 5`.\n  - Run `v8q preset apply beginner-safe --write` for the safest first-run config.\n  - Run `v8q preset apply wl-screenrec-nvidia-compat --write` for the 60 FPS NVIDIA compatibility path.\n  - Reduce FPS/bitrate if the backend still exits.\n  - If multiple displays are enabled, set `[wl_screenrec] output = \"DP-1\"` or another output from `hyprctl monitors -j`.\n  - Test a custom/wf-recorder backend if wl-screenrec keeps crashing on this NVIDIA/Hyprland setup.",
         history_file.display(),
@@ -475,6 +542,25 @@ fn move_file(from: &Path, to: &Path) -> anyhow::Result<()> {
     }
 }
 
+fn unique_output_path(output_dir: &Path, name: Option<&str>) -> PathBuf {
+    let first = output_dir.join(crate::build_clip_filename(name));
+    if !first.exists() {
+        return first;
+    }
+    let stem = first
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("v8q_clip")
+        .to_string();
+    for counter in 1..1000 {
+        let candidate = output_dir.join(format!("{stem}_{counter}.mkv"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    output_dir.join(format!("{stem}_{}.mkv", Local::now().timestamp_millis()))
+}
+
 pub fn logs(config: &Config) -> anyhow::Result<LogsResult> {
     Ok(LogsResult {
         logs: log_lines(config)?,
@@ -506,7 +592,7 @@ fn read_log_tail(path: &Path) -> anyhow::Result<Vec<String>> {
         .lines()
         .rev()
         .take(10)
-        .map(ToString::to_string)
+        .map(strip_ansi)
         .collect::<Vec<_>>()
         .into_iter()
         .rev()
@@ -557,7 +643,8 @@ mod tests {
     use crate::lock::FileLock;
 
     use super::{
-        escape_concat_path, is_cleanable_buffer_file, is_segment_file, wl_screenrec_failure_context,
+        escape_concat_path, is_cleanable_buffer_file, is_segment_file, strip_ansi,
+        wl_screenrec_failure_context,
     };
 
     #[test]
@@ -654,5 +741,16 @@ mod tests {
         assert!(context.contains("beginner-safe"));
         assert!(context.contains("wl-screenrec-nvidia-compat"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn strips_basic_ansi_escape_sequences() {
+        assert_eq!(strip_ansi("\u{1b}[31mERROR\u{1b}[0m plain"), "ERROR plain");
+    }
+
+    #[test]
+    fn tiny_history_threshold_marks_zero_bytes_invalid() {
+        let size = 0;
+        assert!(size < super::MIN_VALID_HISTORY_BYTES);
     }
 }

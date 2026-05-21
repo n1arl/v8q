@@ -150,6 +150,36 @@ pub fn find(name: &str) -> Option<Preset> {
     presets().into_iter().find(|preset| preset.name == name)
 }
 
+pub fn detect(config: &Config) -> Option<&'static str> {
+    presets()
+        .into_iter()
+        .find(|preset| preset_matches(config, preset))
+        .map(|preset| preset.name)
+}
+
+fn preset_matches(config: &Config, preset: &Preset) -> bool {
+    preset.fps.is_none_or(|fps| config.recording.fps == fps)
+        && preset
+            .encoder
+            .is_none_or(|encoder| config.wl_screenrec.ffmpeg_encoder == encoder)
+        && preset
+            .bitrate
+            .is_none_or(|bitrate| config.wl_screenrec.bitrate == bitrate)
+        && preset
+            .duration_seconds
+            .is_none_or(|duration| config.recording.duration_seconds == duration)
+        && preset
+            .ffmpeg_encoder_options
+            .is_none_or(|options| config.wl_screenrec.ffmpeg_encoder_options == options)
+        && preset
+            .wl_screenrec_audio
+            .is_none_or(|audio| config.wl_screenrec.audio == audio)
+        && preset.wl_screenrec_extra_args.as_ref().is_none_or(|args| {
+            config.wl_screenrec.extra_args
+                == args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>()
+        })
+}
+
 pub fn apply(config: &mut Config, preset: &Preset) {
     if let Some(fps) = preset.fps {
         config.recording.fps = fps;
@@ -223,4 +253,24 @@ pub fn describe_diff(config: &Config, preset: &Preset) -> Vec<String> {
         ));
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn detect_finds_applied_beginner_safe_preset() {
+        let preset = super::find("beginner-safe").unwrap();
+        let mut config = crate::Config::default();
+        super::apply(&mut config, &preset);
+        assert_eq!(super::detect(&config), Some("beginner-safe"));
+    }
+
+    #[test]
+    fn dry_run_diff_reports_changes() {
+        let preset = super::find("beginner-safe").unwrap();
+        let config = crate::Config::default();
+        let diff = super::describe_diff(&config, &preset);
+        assert!(diff.iter().any(|line| line.contains("recording.fps")));
+        assert!(diff.iter().any(|line| line.contains("wl_screenrec.audio")));
+    }
 }

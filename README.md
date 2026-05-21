@@ -65,6 +65,8 @@ You can also run it directly:
 For a first run on Hyprland/NVIDIA, start with the conservative preset:
 
 ```bash
+v8q welcome
+v8q doctor --fix-plan
 v8q preset apply beginner-safe --write
 ```
 
@@ -98,7 +100,7 @@ On some NVIDIA/Hyprland systems, `wl-screenrec` can pass a short debug run and s
 
 ```bash
 v8q start
-v8q save
+v8q save --name first-clip
 v8q stop
 ```
 
@@ -106,6 +108,9 @@ Save with a readable suffix:
 
 ```bash
 v8q save --name ace-1v3
+v8q save --name ace-1v3 --open
+v8q save --name ace-1v3 --reveal
+v8q save --json
 ```
 
 ## Manual Test Matrix
@@ -184,20 +189,26 @@ v8q setup
 v8q start
 v8q stop
 v8q status
+v8q status --json
 v8q doctor
+v8q doctor --fix-plan
 v8q save
 v8q clean
 v8q logs
+v8q logs --tail 50
+v8q logs --clear
 v8q open-folder
 v8q config path
 v8q config show
+v8q config show --json
 v8q config edit
 v8q config init --force
 v8q clips
 v8q clips --latest
 v8q clips --open-latest
-v8q save --name "ace-1v3" --open
-v8q save --json
+v8q clip info "$(v8q clips --latest)"
+v8q clip open "$(v8q clips --latest)"
+v8q clip reveal "$(v8q clips --latest)"
 v8q setup
 v8q setup hyprland
 v8q setup shell
@@ -210,15 +221,19 @@ v8q mode beginner
 v8q mode advanced
 v8q windows
 v8q window select --title Firefox
+v8q window select --interactive
 v8q window show
 v8q debug info
 v8q debug window
+v8q service print
 v8q service install
 v8q service enable
 v8q service start
 ```
 
 `v8q doctor` checks PATH, FFmpeg, `wl-screenrec`, NVENC encoder availability, PipeWire/portal user services, config loading, backend recognition, and configured paths. It exits with code `1` only when it finds a failing check.
+
+`v8q doctor --fix-plan` does not change the system. It prints the commands V8Q recommends for the current machine, such as adding Cargo to `PATH`, installing missing packages, applying `beginner-safe`, or running the wl-screenrec debug probe.
 
 ## Configuration
 
@@ -388,7 +403,11 @@ To persistently select a program/window:
 
 ```bash
 v8q windows
+v8q windows --json
 v8q window select --title Firefox
+v8q window select --class firefox
+v8q window select --app-id steam
+v8q window select --interactive
 v8q start
 v8q save --name firefox
 ```
@@ -435,6 +454,8 @@ Show recent backend logs:
 
 ```bash
 v8q logs
+v8q logs --tail 50
+v8q logs --clear
 ```
 
 Open the clips folder:
@@ -449,6 +470,8 @@ List saved clips or work with the latest clip:
 v8q clips
 v8q clips --latest
 v8q clips --open-latest
+v8q clip info "$(v8q clips --latest)"
+v8q clip reveal "$(v8q clips --latest)"
 ```
 
 ## Config Commands
@@ -456,6 +479,7 @@ v8q clips --open-latest
 ```bash
 v8q config path
 v8q config show
+v8q config show --json
 v8q config show --resolved
 v8q config validate
 v8q config edit
@@ -503,6 +527,7 @@ Recommended starting points:
 ## Service
 
 ```bash
+v8q service print
 v8q service install
 v8q service enable
 v8q service start

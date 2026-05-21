@@ -18,7 +18,7 @@ pub use config::{CaptureBackend, Config};
 pub use doctor::{DoctorCheck, DoctorCheckStatus, DoctorReport};
 pub use error::Result;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct StartResult {
     pub pid: u32,
     pub backend: String,
@@ -26,20 +26,20 @@ pub struct StartResult {
     pub log_file: PathBuf,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct StopResult {
     pub was_running: bool,
     pub pid: Option<u32>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SaveResult {
     pub output_file: PathBuf,
     pub duration_seconds: u64,
     pub backend: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct StatusInfo {
     pub is_running: bool,
     pub pid: Option<u32>,
@@ -47,6 +47,9 @@ pub struct StatusInfo {
     pub config_path: PathBuf,
     pub buffer_dir: PathBuf,
     pub output_dir: PathBuf,
+    pub latest_clip: Option<PathBuf>,
+    pub detected_preset: Option<String>,
+    pub capture_target: String,
     pub replay_duration: u64,
     pub segment_duration: u64,
     pub fps: u32,
@@ -61,6 +64,8 @@ pub struct StatusInfo {
     pub warnings: Vec<String>,
     pub error: Option<String>,
     pub log_tail: Vec<String>,
+    pub last_error_lines: Vec<String>,
+    pub log_file: Option<PathBuf>,
     pub expected_history_file: Option<PathBuf>,
     pub history_exists: Option<bool>,
     pub history_size_bytes: Option<u64>,
@@ -85,7 +90,8 @@ pub struct ClipsResult {
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SaveJson {
-    pub output_file: PathBuf,
+    pub success: bool,
+    pub output_path: PathBuf,
     pub backend: String,
     pub duration_seconds: u64,
     pub size_bytes: u64,

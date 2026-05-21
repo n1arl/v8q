@@ -17,3 +17,12 @@ v8q setup hyprland
 
 Use `--write` only if you want V8Q to append the block to `~/.config/hypr/hyprland.conf`.
 
+Window capture:
+
+```bash
+v8q windows
+v8q window select --interactive
+v8q window show
+```
+
+V8Q uses `hyprctl clients -j` and passes the selected rectangle to `wl-screenrec --geometry`.

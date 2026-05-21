@@ -32,6 +32,7 @@ struct Ui {
     status_value: gtk4::Label,
     pid_value: gtk4::Label,
     backend_value: gtk4::Label,
+    capture_target_value: gtk4::Label,
     replay_value: gtk4::Label,
     fps_value: gtk4::Label,
     encoder_value: gtk4::Label,
@@ -39,6 +40,7 @@ struct Ui {
     buffer_value: gtk4::Label,
     output_value: gtk4::Label,
     latest_clip_value: gtk4::Label,
+    recent_errors_value: gtk4::Label,
     message_value: gtk4::Label,
     start_button: gtk4::Button,
     save_button: gtk4::Button,
@@ -86,13 +88,15 @@ fn build_ui(app: &libadwaita::Application) {
     let status_value = add_row(&grid, 0, "Status");
     let pid_value = add_row(&grid, 1, "PID");
     let backend_value = add_row(&grid, 2, "Backend");
-    let replay_value = add_row(&grid, 3, "Replay");
-    let fps_value = add_row(&grid, 4, "FPS");
-    let encoder_value = add_row(&grid, 5, "Encoder");
-    let bitrate_value = add_row(&grid, 6, "Bitrate");
-    let buffer_value = add_row(&grid, 7, "Buffer");
-    let output_value = add_row(&grid, 8, "Clips");
-    let latest_clip_value = add_row(&grid, 9, "Last clip");
+    let capture_target_value = add_row(&grid, 3, "Capture target");
+    let replay_value = add_row(&grid, 4, "Replay");
+    let fps_value = add_row(&grid, 5, "FPS");
+    let encoder_value = add_row(&grid, 6, "Encoder");
+    let bitrate_value = add_row(&grid, 7, "Bitrate");
+    let buffer_value = add_row(&grid, 8, "Buffer");
+    let output_value = add_row(&grid, 9, "Clips");
+    let latest_clip_value = add_row(&grid, 10, "Last clip");
+    let recent_errors_value = add_row(&grid, 11, "Recent errors");
 
     let message_value = gtk4::Label::builder()
         .label("Ready.")
@@ -153,6 +157,7 @@ fn build_ui(app: &libadwaita::Application) {
         status_value,
         pid_value,
         backend_value,
+        capture_target_value,
         replay_value,
         fps_value,
         encoder_value,
@@ -160,6 +165,7 @@ fn build_ui(app: &libadwaita::Application) {
         buffer_value,
         output_value,
         latest_clip_value,
+        recent_errors_value,
         message_value,
         start_button,
         save_button,
@@ -369,6 +375,7 @@ fn apply_snapshot(
             .unwrap_or_else(|| "-".to_string()),
     );
     ui.backend_value.set_label(&status.backend);
+    ui.capture_target_value.set_label(&status.capture_target);
     ui.replay_value
         .set_label(&format!("{}s", status.replay_duration));
     ui.fps_value.set_label(&status.fps.to_string());
@@ -384,6 +391,12 @@ fn apply_snapshot(
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_else(|| "-".to_string()),
     );
+    ui.recent_errors_value
+        .set_label(&if status.last_error_lines.is_empty() {
+            "-".to_string()
+        } else {
+            status.last_error_lines.join("\n")
+        });
     let mut messages = status.warnings.clone();
     if status.is_running && status.history_exists == Some(false) {
         messages.push(

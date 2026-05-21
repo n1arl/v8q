@@ -47,11 +47,15 @@ pub fn start(config: &Config) -> anyhow::Result<StartResult> {
         .try_clone()
         .with_context(|| format!("failed to clone {}", log_file_path.display()))?;
 
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(program_args)
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr))
+        .stderr(Stdio::from(stderr));
+    detach_recorder_process_group(&mut command);
+
+    let mut child = command
         .spawn()
         .with_context(|| format!("failed to start wl-screenrec: {}", args.join(" ")))?;
 
@@ -87,6 +91,14 @@ pub fn start(config: &Config) -> anyhow::Result<StartResult> {
         buffer_dir,
         log_file: log_file_path,
     })
+}
+
+fn detach_recorder_process_group(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
 }
 
 fn startup_hint(log_tail: &[String]) -> &'static str {

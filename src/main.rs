@@ -1,5 +1,5 @@
 use std::fs::OpenOptions;
-use std::io::Read;
+use std::io::{IsTerminal, Read, Write};
 use std::process::{Command as ProcessCommand, Stdio};
 
 use anyhow::Context;
@@ -48,17 +48,30 @@ fn main() -> Result<()> {
             }
         }
         Command::Stop => print_stop(v8q::stop_recorder(&config)?),
-        Command::Status => print_status(v8q::get_status(&config)?),
-        Command::Doctor { json, verbose } => {
-            let report = v8q::run_doctor(&config)?;
+        Command::Status { json } => {
+            let status = v8q::get_status(&config)?;
             if json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                print_status(status);
+            }
+        }
+        Command::Doctor {
+            json,
+            verbose,
+            fix_plan,
+        } => {
+            let report = v8q::run_doctor(&config)?;
+            if fix_plan {
+                print_fix_plan(&report, &config);
+            } else if json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else if verbose || config.ui.mode == "advanced" {
                 print_doctor(&report);
             } else {
                 print_doctor_summary(&report);
             }
-            if report.fail_count > 0 {
+            if report.fail_count > 0 && !fix_plan {
                 std::process::exit(1);
             }
         }
@@ -66,6 +79,7 @@ fn main() -> Result<()> {
             name,
             duration,
             open,
+            reveal,
             no_notify,
             json,
         } => {
@@ -82,12 +96,16 @@ fn main() -> Result<()> {
             if open {
                 v8q::open_path(&result.output_file)?;
             }
+            if reveal {
+                reveal_path(&result.output_file)?;
+            }
             if json {
                 let size_bytes = std::fs::metadata(&result.output_file)
                     .map(|metadata| metadata.len())
                     .unwrap_or(0);
                 let payload = v8q::SaveJson {
-                    output_file: result.output_file,
+                    success: true,
+                    output_path: result.output_file,
                     backend: result.backend,
                     duration_seconds: result.duration_seconds,
                     size_bytes,
@@ -107,7 +125,8 @@ fn main() -> Result<()> {
             follow,
             backend,
             lines,
-        } => handle_logs(&config, follow, backend, lines)?,
+            clear,
+        } => handle_logs(&config, follow, backend, lines, clear)?,
         Command::Config { command } => handle_config(command, &config)?,
         Command::Clips {
             latest,
@@ -141,12 +160,16 @@ fn main() -> Result<()> {
 
 fn print_welcome() {
     println!("V8Q - Linux Replay Recorder\n");
-    println!("1. Setup:\n   v8q setup\n");
-    println!("2. Start recorder:\n   v8q start\n");
-    println!("3. Save replay:\n   v8q save\n");
-    println!("4. See clips:\n   v8q clips\n");
-    println!("5. Diagnose:\n   v8q doctor\n");
-    println!("6. Hyprland binds:\n   v8q setup hyprland");
+    println!("V8Q keeps a small replay buffer and saves recent clips on demand.");
+    println!("Start here:\n");
+    println!("  v8q doctor");
+    println!("  v8q preset apply beginner-safe --write");
+    println!("  v8q start    # then: v8q save, v8q stop");
+    if !cargo_bin_in_path() {
+        println!("\nWARN: ~/.cargo/bin is not in PATH.");
+        println!("Add it with: export PATH=\"$HOME/.cargo/bin:$PATH\"");
+        println!("Or run directly: ~/.cargo/bin/v8q doctor");
+    }
 }
 
 fn print_start(result: v8q::StartResult) {
@@ -170,7 +193,7 @@ fn print_stop(result: v8q::StopResult) {
 fn print_status(status: v8q::StatusInfo) {
     println!("V8Q Status\n");
     println!(
-        "State: {}",
+        "Recorder: {}",
         if status.is_running {
             "running"
         } else {
@@ -181,9 +204,19 @@ fn print_status(status: v8q::StatusInfo) {
         println!("PID: {pid}");
     }
     println!("Backend: {}", status.backend);
+    if let Some(preset) = &status.detected_preset {
+        println!("Preset: {preset}");
+    }
+    println!("Capture target: {}", status.capture_target);
     println!("Config: {}", status.config_path.display());
     println!("Buffer: {}", status.buffer_dir.display());
     println!("Output: {}", status.output_dir.display());
+    if let Some(path) = &status.latest_clip {
+        println!("Latest clip: {}", path.display());
+    }
+    if let Some(path) = &status.log_file {
+        println!("Log file: {}", path.display());
+    }
     println!("Replay: {}s", status.replay_duration);
     println!("Segment: {}s", status.segment_duration);
     println!("FPS: {}", status.fps);
@@ -234,6 +267,12 @@ fn print_status(status: v8q::StatusInfo) {
     if !status.log_tail.is_empty() {
         println!("\nLast wl-screenrec log:");
         for line in status.log_tail {
+            println!("  {line}");
+        }
+    }
+    if !status.last_error_lines.is_empty() {
+        println!("\nRecent relevant log lines:");
+        for line in status.last_error_lines {
             println!("  {line}");
         }
     }
@@ -322,6 +361,47 @@ fn print_doctor_summary(report: &v8q::DoctorReport) {
     println!("\nRun `v8q doctor --verbose` for details.");
 }
 
+fn print_fix_plan(report: &v8q::DoctorReport, config: &v8q::Config) {
+    println!("V8Q Fix Plan\n");
+    println!("No changes were made.\n");
+    if !cargo_bin_in_path() {
+        println!("- Add Cargo bin to PATH:");
+        println!("  echo 'export PATH=\"$HOME/.cargo/bin:$PATH\"' >> ~/.bashrc");
+        println!("  source ~/.bashrc");
+    }
+    if report
+        .checks
+        .iter()
+        .any(|check| check.name == "ffmpeg" && check.status != DoctorCheckStatus::Ok)
+    {
+        println!("- Install FFmpeg:");
+        println!("  sudo pacman -S ffmpeg");
+    }
+    if report
+        .checks
+        .iter()
+        .any(|check| check.name == "wl-screenrec" && check.status != DoctorCheckStatus::Ok)
+    {
+        println!("- Install wl-screenrec:");
+        println!("  paru -S wl-screenrec");
+    }
+    if report.checks.iter().any(|check| {
+        check.name == "xdg-desktop-portal-hyprland" && check.status != DoctorCheckStatus::Ok
+    }) {
+        println!("- Install/enable Hyprland portal:");
+        println!("  sudo pacman -S xdg-desktop-portal xdg-desktop-portal-hyprland");
+        println!("  systemctl --user restart xdg-desktop-portal xdg-desktop-portal-hyprland");
+    }
+    if v8q::preset::detect(config).is_none() {
+        println!("- Apply the safest first-run preset:");
+        println!("  v8q preset apply beginner-safe --write");
+    }
+    println!("- Test capture:");
+    println!("  v8q debug wl-screenrec --test-run 5");
+    println!("- Smoke test:");
+    println!("  v8q start && sleep 10 && v8q save --name smoke && v8q stop");
+}
+
 fn print_logs(result: v8q::LogsResult) {
     for (path, lines) in result.logs {
         println!("\nLast log lines from {}:", path.display());
@@ -334,7 +414,13 @@ fn print_logs(result: v8q::LogsResult) {
 fn handle_config(command: ConfigCommand, config: &v8q::Config) -> Result<()> {
     match command {
         ConfigCommand::Path => println!("{}", v8q::config_path()?.display()),
-        ConfigCommand::Show { resolved: _ } => println!("{}", toml::to_string_pretty(config)?),
+        ConfigCommand::Show { resolved: _, json } => {
+            if json {
+                println!("{}", serde_json::to_string_pretty(config)?);
+            } else {
+                println!("{}", toml::to_string_pretty(config)?);
+            }
+        }
         ConfigCommand::Validate => {
             let warnings = v8q::validate_config_detailed(config)?;
             println!("Config OK");
@@ -412,8 +498,20 @@ fn handle_logs(
     follow: bool,
     backend: Option<String>,
     lines: usize,
+    clear: bool,
 ) -> Result<()> {
     let files = log_files(backend.as_deref());
+    if clear {
+        let mut removed = 0usize;
+        for file in &files {
+            if file.exists() {
+                std::fs::remove_file(file)?;
+                removed += 1;
+            }
+        }
+        println!("Removed {removed} log file(s).");
+        return Ok(());
+    }
     if follow {
         let mut command = ProcessCommand::new("tail");
         command.arg("-f");
@@ -480,10 +578,23 @@ fn handle_clips(
         clips.truncate(limit);
     }
     if json {
-        println!("{}", serde_json::to_string_pretty(&clips)?);
+        let rows = clips
+            .iter()
+            .map(|path| clip_summary(config, path))
+            .collect::<Result<Vec<_>>>()?;
+        println!("{}", serde_json::to_string_pretty(&rows)?);
     } else {
         for clip in clips {
-            println!("{}", clip.display());
+            let row = clip_summary(config, &clip)?;
+            println!(
+                "{} | {} bytes | {} | {}",
+                row.name,
+                row.size_bytes,
+                row.duration
+                    .map(|duration| format!("{duration:.3}s"))
+                    .unwrap_or_else(|| "duration unknown".to_string()),
+                row.path.display()
+            );
         }
     }
     Ok(())
@@ -493,14 +604,38 @@ fn handle_clip(command: ClipCommand, config: &v8q::Config) -> Result<()> {
     match command {
         ClipCommand::Info { path } => {
             let path = PathBuf::from(path);
+            ensure_clip_in_output(config, &path, true)?;
             let metadata = std::fs::metadata(&path)?;
             println!("Path: {}", path.display());
             println!("Size: {} bytes", metadata.len());
             if let Ok(modified) = metadata.modified() {
                 println!("Modified: {:?}", modified);
             }
+            match ffprobe_clip(&path) {
+                Ok(Some(info)) => {
+                    println!("Duration: {:.3}s", info.duration.unwrap_or(0.0));
+                    println!(
+                        "Codec: {}",
+                        info.codec.unwrap_or_else(|| "unknown".to_string())
+                    );
+                    if let (Some(width), Some(height)) = (info.width, info.height) {
+                        println!("Resolution: {width}x{height}");
+                    }
+                    if let Some(level) = info.level {
+                        println!("Level: {level}");
+                    }
+                    if let Some(has_b_frames) = info.has_b_frames {
+                        println!("Has B-frames: {has_b_frames}");
+                    }
+                }
+                Ok(None) => {
+                    println!("ffprobe unavailable; install ffmpeg to inspect codec/duration.");
+                }
+                Err(error) => println!("ffprobe failed: {error:#}"),
+            }
         }
         ClipCommand::Open { path } => v8q::open_path(path)?,
+        ClipCommand::Reveal { path } => reveal_path(Path::new(&path))?,
         ClipCommand::Delete {
             path,
             force_external,
@@ -528,6 +663,108 @@ fn handle_clip(command: ClipCommand, config: &v8q::Config) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, serde::Serialize)]
+struct ClipSummary {
+    name: String,
+    path: PathBuf,
+    size_bytes: u64,
+    duration: Option<f64>,
+    modified: Option<String>,
+}
+
+#[derive(Debug)]
+struct ProbeInfo {
+    duration: Option<f64>,
+    codec: Option<String>,
+    width: Option<u64>,
+    height: Option<u64>,
+    level: Option<u64>,
+    has_b_frames: Option<u64>,
+}
+
+fn clip_summary(_config: &v8q::Config, path: &Path) -> Result<ClipSummary> {
+    let metadata = std::fs::metadata(path)?;
+    let duration = ffprobe_clip(path)
+        .ok()
+        .flatten()
+        .and_then(|info| info.duration);
+    let modified = metadata
+        .modified()
+        .ok()
+        .map(|time| chrono::DateTime::<chrono::Local>::from(time).to_rfc3339());
+    Ok(ClipSummary {
+        name: path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("<unknown>")
+            .to_string(),
+        path: path.to_path_buf(),
+        size_bytes: metadata.len(),
+        duration,
+        modified,
+    })
+}
+
+fn ffprobe_clip(path: &Path) -> Result<Option<ProbeInfo>> {
+    if v8q::doctor::command_path("ffprobe").is_none() {
+        return Ok(None);
+    }
+    let output = ProcessCommand::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration:stream=codec_name,width,height,level,has_b_frames",
+            "-of",
+            "json",
+        ])
+        .arg(path)
+        .output()
+        .context("failed to run ffprobe")?;
+    if !output.status.success() {
+        anyhow::bail!("{}", String::from_utf8_lossy(&output.stderr));
+    }
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let stream = json
+        .get("streams")
+        .and_then(|streams| streams.as_array())
+        .and_then(|streams| streams.first());
+    Ok(Some(ProbeInfo {
+        duration: json
+            .get("format")
+            .and_then(|format| format.get("duration"))
+            .and_then(|duration| duration.as_str())
+            .and_then(|duration| duration.parse::<f64>().ok()),
+        codec: stream
+            .and_then(|stream| stream.get("codec_name"))
+            .and_then(|codec| codec.as_str())
+            .map(ToString::to_string),
+        width: stream
+            .and_then(|stream| stream.get("width"))
+            .and_then(|width| width.as_u64()),
+        height: stream
+            .and_then(|stream| stream.get("height"))
+            .and_then(|height| height.as_u64()),
+        level: stream
+            .and_then(|stream| stream.get("level"))
+            .and_then(|level| level.as_u64()),
+        has_b_frames: stream
+            .and_then(|stream| stream.get("has_b_frames"))
+            .and_then(|frames| frames.as_u64()),
+    }))
+}
+
+fn reveal_path(path: &Path) -> Result<()> {
+    let dir = if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| anyhow::anyhow!("path has no parent: {}", path.display()))?
+    };
+    v8q::open_path(dir)
+}
+
 fn handle_setup(command: Option<SetupCommand>, config: &v8q::Config) -> Result<()> {
     std::fs::create_dir_all(config.paths.output_dir_path())?;
     std::fs::create_dir_all(config.paths.buffer_dir_path())?;
@@ -539,6 +776,9 @@ fn handle_setup(command: Option<SetupCommand>, config: &v8q::Config) -> Result<(
         None => {
             println!("V8Q setup complete.\n");
             print_doctor_summary(&report);
+            if std::io::stdin().is_terminal() {
+                interactive_setup(config)?;
+            }
             println!("\nBasic commands:");
             println!("  v8q start");
             println!("  v8q save");
@@ -551,6 +791,48 @@ fn handle_setup(command: Option<SetupCommand>, config: &v8q::Config) -> Result<(
         }
     }
     Ok(())
+}
+
+fn interactive_setup(config: &v8q::Config) -> Result<()> {
+    println!("\nInteractive setup:");
+    if prompt_yes_no("Use beginner mode?", config.ui.mode != "advanced")? {
+        let mut next = config.clone();
+        next.ui.mode = "beginner".to_string();
+        let backup = backup_config_file()?;
+        v8q::save_config(&next)?;
+        println!("Mode set to beginner. Backup: {}", backup.display());
+    }
+    if prompt_yes_no("Apply beginner-safe preset?", false)? {
+        let preset = v8q::preset::find("beginner-safe")
+            .ok_or_else(|| anyhow::anyhow!("missing beginner-safe preset"))?;
+        let mut next = v8q::Config::load_or_create_default()?;
+        let backup = backup_config_file()?;
+        v8q::preset::apply(&mut next, &preset);
+        v8q::save_config(&next)?;
+        println!("Applied beginner-safe. Backup: {}", backup.display());
+    }
+    if prompt_yes_no("Run wl-screenrec test now?", false)? {
+        let latest = v8q::Config::load_or_create_default()?;
+        debug_wl_screenrec_test_run(&latest, 5)?;
+    }
+    if prompt_yes_no("Show suggested Hyprland binds?", true)? {
+        print_hyprland_setup(false)?;
+    }
+    Ok(())
+}
+
+fn prompt_yes_no(question: &str, default_yes: bool) -> Result<bool> {
+    let suffix = if default_yes { "[Y/n]" } else { "[y/N]" };
+    print!("{question} {suffix} ");
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let value = input.trim().to_ascii_lowercase();
+    Ok(if value.is_empty() {
+        default_yes
+    } else {
+        matches!(value.as_str(), "y" | "yes" | "s" | "sim")
+    })
 }
 
 fn handle_preset(command: PresetCommand, config: &v8q::Config) -> Result<()> {
@@ -636,10 +918,13 @@ fn handle_window(command: WindowCommand, config: &v8q::Config) -> Result<()> {
             title,
             app_id,
             class,
+            interactive,
             follow,
         } => {
             let windows = v8q::window::list_hyprland_windows()?;
-            let selected = if title.is_none() && app_id.is_none() && class.is_none() {
+            let selected = if interactive {
+                select_window_interactive(&windows)
+            } else if title.is_none() && app_id.is_none() && class.is_none() {
                 v8q::window::select_window(&windows, None, None, None)
                     .or_else(|_| active_window_from_hyprctl())
             } else {
@@ -692,6 +977,37 @@ fn handle_window(command: WindowCommand, config: &v8q::Config) -> Result<()> {
     Ok(())
 }
 
+fn select_window_interactive(
+    windows: &[v8q::window::WindowInfo],
+) -> Result<v8q::window::WindowInfo> {
+    if windows.is_empty() {
+        anyhow::bail!("no Hyprland windows found");
+    }
+    for (index, window) in windows.iter().enumerate() {
+        println!(
+            "{}: {} | class={} app_id={} address={} geometry={}",
+            index + 1,
+            window.title,
+            window.class,
+            window.app_id,
+            window.address,
+            window.geometry()
+        );
+    }
+    print!("Select window number: ");
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    let index = input
+        .trim()
+        .parse::<usize>()
+        .context("invalid window number")?;
+    windows
+        .get(index.saturating_sub(1))
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("window number out of range"))
+}
+
 fn active_window_from_hyprctl() -> Result<v8q::window::WindowInfo> {
     let output = ProcessCommand::new("hyprctl")
         .args(["activewindow", "-j"])
@@ -724,6 +1040,7 @@ fn backup_config_file() -> Result<PathBuf> {
 
 fn handle_service(command: ServiceCommand) -> Result<()> {
     match command {
+        ServiceCommand::Print => print!("{}", v8q::service::service_file()),
         ServiceCommand::Install => println!("Installed {}", v8q::service::install()?.display()),
         ServiceCommand::Uninstall => println!("Removed {}", v8q::service::uninstall()?.display()),
         ServiceCommand::Start => print!("{}", v8q::service::systemctl(&["start", "v8q.service"])?),
@@ -969,11 +1286,15 @@ fn debug_wl_screenrec_test_run(config: &v8q::Config, seconds: u64) -> Result<()>
     let stderr = stdout.try_clone()?;
 
     println!("test_command: {}", command.join(" "));
-    let mut child = ProcessCommand::new(program)
+    let mut command = ProcessCommand::new(program);
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr))
+        .stderr(Stdio::from(stderr));
+    detach_recorder_process_group(&mut command);
+
+    let mut child = command
         .spawn()
         .context("failed to spawn wl-screenrec test-run")?;
     println!("test_pid: {}", child.id());
@@ -1002,6 +1323,14 @@ fn debug_wl_screenrec_test_run(config: &v8q::Config, seconds: u64) -> Result<()>
         );
     }
     Ok(())
+}
+
+fn detach_recorder_process_group(command: &mut ProcessCommand) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
 }
 
 fn print_supported_flags(help: &str) {
@@ -1086,10 +1415,7 @@ fn run_foreground(config: &v8q::Config) -> Result<()> {
 }
 
 fn print_shell_setup(write: bool) -> Result<()> {
-    let cargo_bin = v8q::paths::expand_tilde("~/.cargo/bin");
-    let in_path = std::env::var_os("PATH")
-        .map(|paths| std::env::split_paths(&paths).any(|path| path == cargo_bin))
-        .unwrap_or(false);
+    let in_path = cargo_bin_in_path();
     if in_path && !write {
         println!("PATH OK: ~/.cargo/bin is already available.");
         return Ok(());
@@ -1121,6 +1447,13 @@ fn print_shell_setup(write: bool) -> Result<()> {
         )?;
     }
     Ok(())
+}
+
+fn cargo_bin_in_path() -> bool {
+    let cargo_bin = v8q::paths::expand_tilde("~/.cargo/bin");
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|path| path == cargo_bin))
+        .unwrap_or(false)
 }
 
 fn print_hyprland_setup(write: bool) -> Result<()> {

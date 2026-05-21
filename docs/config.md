@@ -11,10 +11,14 @@ Useful commands:
 ```bash
 v8q config path
 v8q config show
+v8q config show --json
 v8q config validate
 v8q config edit
+v8q config migrate
 v8q config migrate --write
 ```
+
+`config migrate` is a dry run by default. `config migrate --write` creates a timestamped backup before writing changes, including legacy `[capture_window]` to `[capture.window]` migration.
 
 Beginner/advanced mode:
 
