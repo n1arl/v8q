@@ -20,9 +20,12 @@ Common fixes:
 For wl-screenrec history/save failures:
 
 ```bash
+v8q debug report
 v8q debug wl-screenrec
 v8q debug wl-screenrec --test-run 5
 ```
+
+Use `v8q debug report` when filing GitHub issues. It includes version, backend/config, session details, Hyprland information where available, wl-screenrec flags, FFmpeg encoder availability, service status, and recent logs.
 
 Manual no-audio probe:
 

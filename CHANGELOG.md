@@ -12,6 +12,8 @@
 - Improved presets and beginner guidance around `beginner-safe`.
 - Improved optional GUI status with capture target and recent errors.
 - Detached `wl-screenrec` into its own process group so `v8q start` behaves like the debug test-run after the CLI exits.
+- Added `v8q debug report` for GitHub issue diagnostics.
+- Added honest V8Q vs `gpu-screen-recorder` documentation and backend roadmap notes.
 - Added GitHub issue/debug templates.
 
 ## 0.3.0 - Unreleased

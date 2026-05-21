@@ -13,6 +13,7 @@ assignees: ""
 ## Commands and output
 
 ```bash
+v8q debug report
 v8q doctor --verbose
 v8q status
 v8q debug wl-screenrec --test-run 5

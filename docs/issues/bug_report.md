@@ -13,6 +13,7 @@ What did you expect V8Q to do?
 Please include:
 
 ```bash
+v8q debug report
 v8q doctor --verbose
 v8q status
 v8q debug wl-screenrec --test-run 5

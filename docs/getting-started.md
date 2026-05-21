@@ -25,6 +25,12 @@ v8q preset apply beginner-safe --write
 v8q debug wl-screenrec --test-run 5
 ```
 
+If that fails, collect diagnostics:
+
+```bash
+v8q debug report
+```
+
 Basic loop:
 
 ```bash

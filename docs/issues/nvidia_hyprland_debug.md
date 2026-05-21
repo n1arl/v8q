@@ -5,6 +5,7 @@ Use this when `wl-screenrec` crashes, the history file is tiny, or saving times 
 ## Required commands
 
 ```bash
+v8q debug report
 v8q doctor --verbose
 v8q status
 v8q debug wl-screenrec --test-run 5

@@ -7,6 +7,7 @@ Describe the window selection or capture problem.
 ## Required commands
 
 ```bash
+v8q debug report
 v8q doctor --verbose
 v8q debug window
 v8q windows

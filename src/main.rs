@@ -1061,6 +1061,7 @@ fn handle_service(command: ServiceCommand) -> Result<()> {
 fn handle_debug(command: DebugCommand, config: &v8q::Config) -> Result<()> {
     match command {
         DebugCommand::Info => debug_info(config),
+        DebugCommand::Report => debug_report(config),
         DebugCommand::WlScreenrec { test_run } => {
             if let Some(seconds) = test_run {
                 debug_wl_screenrec_test_run(config, seconds)
@@ -1096,6 +1097,179 @@ fn debug_info(config: &v8q::Config) -> Result<()> {
     if let Some(pid) = status.pid {
         println!("pid: {pid}");
     }
+    Ok(())
+}
+
+fn debug_report(config: &v8q::Config) -> Result<()> {
+    let status = v8q::get_status(config)?;
+    let doctor = v8q::run_doctor(config)?;
+    let backend = config.effective_backend()?.as_str().to_string();
+    let config_path = v8q::config_path()?;
+    let wl_help = v8q::doctor::wl_screenrec_help_text().ok();
+    let wl_command = v8q::wl_screenrec::command_for_config(config)
+        .map(|(command, _)| command.join(" "))
+        .unwrap_or_else(|error| format!("<failed to build command: {error:#}>"));
+
+    println!("# V8Q Debug Report\n");
+    println!("Generated: {}", chrono::Local::now().to_rfc3339());
+
+    println!("\n## V8Q");
+    println!("version: {}", env!("CARGO_PKG_VERSION"));
+    println!(
+        "current_exe: {}",
+        std::env::current_exe()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|error| format!("<unavailable: {error}>"))
+    );
+    println!("config_path: {}", config_path.display());
+    println!("backend: {backend}");
+    println!(
+        "preset_detected: {}",
+        status.detected_preset.as_deref().unwrap_or("unknown")
+    );
+    println!("capture_target: {}", status.capture_target);
+    println!("output_dir: {}", config.paths.output_dir_path().display());
+    println!("buffer_dir: {}", config.paths.buffer_dir_path().display());
+    println!(
+        "log_file: {}",
+        status
+            .log_file
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "<none>".to_string())
+    );
+    println!("recorder_running: {}", status.is_running);
+    if let Some(pid) = status.pid {
+        println!("recorder_pid: {pid}");
+    }
+    println!(
+        "history_file: {}",
+        config.wl_screenrec_history_file().display()
+    );
+    println!(
+        "history_exists: {}",
+        option_bool_text(status.history_exists)
+    );
+    println!(
+        "history_size_bytes: {}",
+        status
+            .history_size_bytes
+            .map(|size| size.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    );
+    println!("history_valid: {}", option_bool_text(status.history_valid));
+
+    println!("\n## System");
+    println!("os: {}", std::env::consts::OS);
+    println!("arch: {}", std::env::consts::ARCH);
+    println!("session: {}", env_var_or_unknown("XDG_SESSION_TYPE"));
+    println!("desktop: {}", env_var_or_unknown("XDG_CURRENT_DESKTOP"));
+    println!(
+        "hyprland_instance: {}",
+        std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
+            .map(|_| "present".to_string())
+            .unwrap_or_else(|_| "missing".to_string())
+    );
+    println!("shell: {}", env_var_or_unknown("SHELL"));
+    println!("path_has_cargo_bin: {}", cargo_bin_in_path());
+
+    println!("\n## Hyprland");
+    println!("hyprctl: {}", command_path_display("hyprctl"));
+    println!(
+        "hyprctl_version: {}",
+        command_text_or("hyprctl", &["version"], "<unavailable>")
+    );
+    println!(
+        "monitors: {}",
+        command_text_or("hyprctl", &["monitors"], "<unavailable>")
+            .lines()
+            .take(8)
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
+    match v8q::window::list_hyprland_windows() {
+        Ok(windows) => println!("windows_count: {}", windows.len()),
+        Err(error) => println!("windows_error: {error:#}"),
+    }
+
+    println!("\n## wl-screenrec");
+    println!("path: {}", command_path_display("wl-screenrec"));
+    println!(
+        "version: {}",
+        command_text_or("wl-screenrec", &["--version"], "<unavailable>")
+    );
+    println!("configured_command: {wl_command}");
+    println!("help_detected: {}", wl_help.is_some());
+    if let Some(help) = &wl_help {
+        for line in supported_flag_lines(help) {
+            println!("{line}");
+        }
+    }
+
+    println!("\n## FFmpeg");
+    println!("ffmpeg: {}", command_path_display("ffmpeg"));
+    println!("ffprobe: {}", command_path_display("ffprobe"));
+    let encoders = v8q::doctor::command_stdout("ffmpeg", &["-hide_banner", "-encoders"]);
+    println!(
+        "encoder_configured_{}: {}",
+        config
+            .effective_encoder()
+            .unwrap_or(&config.recording.encoder),
+        contains_text(
+            encoders.as_deref(),
+            config
+                .effective_encoder()
+                .unwrap_or(&config.recording.encoder)
+        )
+    );
+    println!(
+        "encoder_h264_nvenc: {}",
+        contains_text(encoders.as_deref(), "h264_nvenc")
+    );
+    println!(
+        "encoder_hevc_nvenc: {}",
+        contains_text(encoders.as_deref(), "hevc_nvenc")
+    );
+    println!(
+        "encoder_libx264: {}",
+        contains_text(encoders.as_deref(), "libx264")
+    );
+
+    println!("\n## Services");
+    for service in [
+        "pipewire",
+        "wireplumber",
+        "xdg-desktop-portal",
+        "xdg-desktop-portal-hyprland",
+    ] {
+        println!("{service}: {}", systemd_user_state(service));
+    }
+
+    println!("\n## Doctor Summary");
+    println!("{}", doctor.summary);
+    for check in doctor.checks {
+        println!("[{:?}] {} - {}", check.status, check.name, check.message);
+        if let Some(hint) = check.hint {
+            println!("  hint: {}", hint.replace('\n', " | "));
+        }
+    }
+
+    println!("\n## Recent Logs");
+    for path in [
+        v8q::paths::log_file_for_backend("wl-screenrec"),
+        v8q::paths::log_file_for_backend("ffmpeg"),
+    ] {
+        println!("### {}", path.display());
+        let lines = v8q::wl_screenrec::tail_log(&path, 80);
+        if lines.is_empty() {
+            println!("<empty or missing>");
+        } else {
+            for line in lines {
+                println!("{line}");
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -1261,6 +1435,73 @@ fn debug_wl_screenrec(config: &v8q::Config) -> Result<()> {
         println!("{line}");
     }
     Ok(())
+}
+
+fn option_bool_text(value: Option<bool>) -> &'static str {
+    match value {
+        Some(true) => "yes",
+        Some(false) => "no",
+        None => "unknown",
+    }
+}
+
+fn env_var_or_unknown(name: &str) -> String {
+    std::env::var(name).unwrap_or_else(|_| "unknown".to_string())
+}
+
+fn command_path_display(command: &str) -> String {
+    v8q::doctor::command_path(command)
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "missing".to_string())
+}
+
+fn command_text_or(command: &str, args: &[&str], fallback: &str) -> String {
+    v8q::doctor::command_stdout(command, args)
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn contains_text(haystack: Option<&str>, needle: &str) -> bool {
+    haystack.map(|text| text.contains(needle)).unwrap_or(false)
+}
+
+fn systemd_user_state(service: &str) -> String {
+    let output = ProcessCommand::new("systemctl")
+        .args(["--user", "is-active", service])
+        .output();
+    match output {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stdout.is_empty() {
+                stderr
+            } else {
+                stdout
+            }
+        }
+        Err(error) => format!("<unavailable: {error}>"),
+    }
+}
+
+fn supported_flag_lines(help: &str) -> Vec<String> {
+    [
+        "--history",
+        "--filename",
+        "--max-fps",
+        "--ffmpeg-encoder",
+        "--audio",
+        "--audio-device",
+        "--audio-backend",
+        "--audio-codec",
+        "--ffmpeg-encoder-options",
+        "--bitrate",
+        "--output",
+        "--geometry",
+    ]
+    .into_iter()
+    .map(|flag| format!("flag_{flag}: {}", help.contains(flag)))
+    .collect()
 }
 
 fn debug_wl_screenrec_test_run(config: &v8q::Config, seconds: u64) -> Result<()> {
@@ -1517,4 +1758,22 @@ fn clean_logs(_older_than: Option<&str>) -> Result<usize> {
         }
     }
     Ok(removed)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn option_bool_text_is_issue_report_friendly() {
+        assert_eq!(super::option_bool_text(Some(true)), "yes");
+        assert_eq!(super::option_bool_text(Some(false)), "no");
+        assert_eq!(super::option_bool_text(None), "unknown");
+    }
+
+    #[test]
+    fn debug_report_flag_lines_include_supported_and_missing_flags() {
+        let lines = super::supported_flag_lines("--history --filename --geometry");
+        assert!(lines.contains(&"flag_--history: true".to_string()));
+        assert!(lines.contains(&"flag_--geometry: true".to_string()));
+        assert!(lines.contains(&"flag_--max-fps: false".to_string()));
+    }
 }

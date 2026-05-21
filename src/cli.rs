@@ -302,6 +302,7 @@ pub enum ServiceCommand {
 #[derive(Debug, Subcommand)]
 pub enum DebugCommand {
     Info,
+    Report,
     WlScreenrec {
         /// Run wl-screenrec for N seconds, trigger history, and print the test log.
         #[arg(long)]
@@ -397,6 +398,14 @@ mod tests {
             cli.command,
             Command::Audio {
                 command: AudioCommand::Sources
+            }
+        ));
+
+        let cli = Cli::try_parse_from(["v8q", "debug", "report"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Debug {
+                command: DebugCommand::Report
             }
         ));
     }

@@ -60,14 +60,16 @@ You can also run it directly:
 ~/.cargo/bin/v8q status
 ```
 
-## First Test
+## Recommended First Run
 
-For a first run on Hyprland/NVIDIA, start with the conservative preset:
+For a first run on Hyprland/NVIDIA, start with video-only compatibility settings. This avoids audio and NVENC variables until the capture path is known to work:
 
 ```bash
 v8q welcome
+v8q doctor
 v8q doctor --fix-plan
 v8q preset apply beginner-safe --write
+v8q debug wl-screenrec --test-run 5
 ```
 
 Then run:
@@ -87,14 +89,27 @@ Saved clips go to:
 ~/Videos/V8Q
 ```
 
-If the smoke test fails, run:
+After video works, enable audio with a real monitor source:
 
 ```bash
+v8q audio sources
+```
+
+Copy a `.monitor` source into `[wl_screenrec].audio_device`, then set `[wl_screenrec] audio = true`.
+
+## If It Fails
+
+If the smoke test fails, gather a report for an issue:
+
+```bash
+v8q debug report
 v8q debug wl-screenrec --test-run 5
 v8q doctor --verbose
 ```
 
 On some NVIDIA/Hyprland systems, `wl-screenrec` can pass a short debug run and still crash during a longer history recording. V8Q reports that honestly with the backend log tail; it does not treat a stale PID as a successful recording.
+
+Attach `v8q debug report` output when opening GitHub issues. It includes V8Q version, config/backend, session details, Hyprland details where available, wl-screenrec flags, FFmpeg encoder availability, service status, and recent logs.
 
 ## Basic Usage
 
@@ -192,6 +207,7 @@ v8q status
 v8q status --json
 v8q doctor
 v8q doctor --fix-plan
+v8q debug report
 v8q save
 v8q clean
 v8q logs
@@ -589,6 +605,21 @@ Supported variables:
 - `{audio_codec}`
 - `{segment_seconds}`
 - `{buffer_dir}`
+
+## V8Q vs gpu-screen-recorder
+
+V8Q is not claiming to beat `gpu-screen-recorder`.
+
+`gpu-screen-recorder` may be more mature, more performance-focused, and a better fit if you want a recorder centered on GPU capture efficiency today. V8Q is a smaller CLI-first project focused on:
+
+- simple replay-buffer workflow with `start`, `save`, and `stop`
+- readable TOML config and presets
+- `doctor` and `debug` commands for Hyprland/Linux troubleshooting
+- Hyprland monitor/window helpers
+- backend-independent clip/export management
+- optional native GTK/libadwaita GUI
+
+A future `gpu-screen-recorder` backend is under consideration. See [docs/backends.md](docs/backends.md).
 
 ## File Tree
 
