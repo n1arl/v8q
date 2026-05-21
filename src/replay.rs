@@ -70,12 +70,7 @@ pub fn status_info(config: &Config) -> anyhow::Result<StatusInfo> {
     };
     let last_error_lines = log_tail
         .iter()
-        .filter(|line| {
-            line.contains("[ERROR]")
-                || line.contains("ERROR")
-                || line.contains("panic")
-                || line.contains("failed")
-        })
+        .filter(|line| is_relevant_log_error(line))
         .rev()
         .take(3)
         .cloned()
@@ -147,7 +142,7 @@ pub fn strip_ansi(text: &str) -> String {
         if ch == '\u{1b}' && chars.peek() == Some(&'[') {
             chars.next();
             for next in chars.by_ref() {
-                if next.is_ascii_alphabetic() {
+                if ('\u{40}'..='\u{7e}').contains(&next) {
                     break;
                 }
             }
@@ -156,6 +151,26 @@ pub fn strip_ansi(text: &str) -> String {
         }
     }
     out
+}
+
+pub fn is_relevant_log_error(line: &str) -> bool {
+    line.contains("ERROR")
+        || line.contains("Error:")
+        || line.contains("error:")
+        || line.contains("panic")
+        || line.contains("failed")
+        || line.contains("Failed")
+}
+
+pub fn last_relevant_log_error<'a, I>(lines: I) -> Option<String>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    lines
+        .into_iter()
+        .filter(|line| is_relevant_log_error(line))
+        .last()
+        .map(ToString::to_string)
 }
 
 pub fn save(config: &Config) -> anyhow::Result<SaveResult> {
@@ -746,6 +761,20 @@ mod tests {
     #[test]
     fn strips_basic_ansi_escape_sequences() {
         assert_eq!(strip_ansi("\u{1b}[31mERROR\u{1b}[0m plain"), "ERROR plain");
+    }
+
+    #[test]
+    fn strips_csi_ansi_escape_sequences() {
+        assert_eq!(strip_ansi("\u{1b}[2Kline\u{1b}[?25h"), "line");
+    }
+
+    #[test]
+    fn finds_last_relevant_log_error() {
+        let lines = ["ok", "ERROR first", "still ok", "Failed second"];
+        assert_eq!(
+            super::last_relevant_log_error(lines.iter().copied()),
+            Some("Failed second".to_string())
+        );
     }
 
     #[test]

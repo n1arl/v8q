@@ -700,4 +700,14 @@ geometry = "5,6 700x800"
         config.capture.as_mut().unwrap().backend = "custom".to_string();
         assert_eq!(config.effective_backend().unwrap(), CaptureBackend::Custom);
     }
+
+    #[test]
+    fn config_example_parses_and_validates() {
+        let config: Config = toml::from_str(include_str!("../config.example.toml")).unwrap();
+        let warnings = super::validate_config(&config).unwrap();
+        assert!(
+            warnings.is_empty(),
+            "config.example.toml should not warn: {warnings:?}"
+        );
+    }
 }

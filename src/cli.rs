@@ -324,7 +324,7 @@ mod tests {
 
     use super::{
         AudioCommand, Cli, ClipCommand, Command, ConfigCommand, DebugCommand, ModeCommand,
-        ServiceCommand, WindowCommand,
+        PresetCommand, ServiceCommand, WindowCommand,
     };
 
     #[test]
@@ -463,11 +463,30 @@ mod tests {
             }
         ));
 
+        let cli = Cli::try_parse_from(["v8q", "logs", "--lines", "50"]).unwrap();
+        assert!(matches!(cli.command, Command::Logs { lines: 50, .. }));
+
+        let cli = Cli::try_parse_from(["v8q", "clip", "info", "/tmp/a.mkv"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Clip {
+                command: ClipCommand::Info { .. }
+            }
+        ));
+
         let cli = Cli::try_parse_from(["v8q", "clip", "reveal", "/tmp/a.mkv"]).unwrap();
         assert!(matches!(
             cli.command,
             Command::Clip {
                 command: ClipCommand::Reveal { .. }
+            }
+        ));
+
+        let cli = Cli::try_parse_from(["v8q", "preset", "explain", "beginner-safe"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Preset {
+                command: PresetCommand::Explain { .. }
             }
         ));
 

@@ -6,6 +6,15 @@ Config path:
 ~/.config/v8q/config.toml
 ```
 
+The generated default uses XDG runtime/state locations when possible:
+
+- buffer: `$XDG_RUNTIME_DIR/v8q/buffer`
+- PID/locks: `$XDG_RUNTIME_DIR/v8q/`
+- logs: `~/.local/state/v8q/logs/`
+- clips: `~/Videos/V8Q`
+
+Old `/tmp/v8q-buffer` and `/tmp/v8q.pid` configs are still accepted for compatibility, but new users should prefer the generated config from `v8q config init`.
+
 Useful commands:
 
 ```bash

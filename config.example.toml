@@ -9,9 +9,14 @@ video_bitrate = "20M"
 audio_codec = "aac"
 
 [paths]
-buffer_dir = "/tmp/v8q-buffer"
+# Generated configs use the XDG runtime dir when available, usually:
+#   $XDG_RUNTIME_DIR/v8q/buffer
+# Example-only explicit path. Prefer `v8q config init` for machine-specific defaults.
+buffer_dir = "/tmp/v8q-example-buffer"
 output_dir = "~/Videos/V8Q"
-pid_file = "/tmp/v8q.pid"
+# Generated configs use the XDG runtime dir when available, usually:
+#   $XDG_RUNTIME_DIR/v8q/v8q.pid
+pid_file = "/tmp/v8q-example.pid"
 
 [capture]
 backend = "wl-screenrec"

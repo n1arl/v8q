@@ -1,5 +1,5 @@
 use std::fs::OpenOptions;
-use std::io::{IsTerminal, Read, Write};
+use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::process::{Command as ProcessCommand, Stdio};
 
 use anyhow::Context;
@@ -53,7 +53,7 @@ fn main() -> Result<()> {
             if json {
                 println!("{}", serde_json::to_string_pretty(&status)?);
             } else {
-                print_status(status);
+                print_status(status, &config.ui.mode);
             }
         }
         Command::Doctor {
@@ -190,7 +190,55 @@ fn print_stop(result: v8q::StopResult) {
     }
 }
 
-fn print_status(status: v8q::StatusInfo) {
+fn print_status(status: v8q::StatusInfo, mode: &str) {
+    if mode != "advanced" {
+        print_status_beginner(status);
+    } else {
+        print_status_advanced(status);
+    }
+}
+
+fn print_status_beginner(status: v8q::StatusInfo) {
+    println!("V8Q Status\n");
+    println!(
+        "Recorder: {}",
+        if status.is_running {
+            "Recording"
+        } else {
+            "Stopped"
+        }
+    );
+    println!("Backend: {}", status.backend);
+    if let Some(pid) = status.pid {
+        println!("PID: {pid}");
+    }
+    println!("Capture target: {}", status.capture_target);
+    if let Some(path) = &status.latest_clip {
+        println!("Last clip: {}", path.display());
+    }
+    if let Some(exists) = status.history_exists {
+        println!("History exists: {exists}");
+    }
+    if let Some(size) = status.history_size_bytes {
+        println!("History size: {}", format_size(size));
+    }
+    if let Some(valid) = status.history_valid {
+        println!("History valid: {}", if valid { "yes" } else { "no" });
+    }
+    if let Some(error) = status.last_error_lines.last() {
+        println!("\nLast relevant error:");
+        println!("  {error}");
+        println!("\nNext steps:");
+        println!("  v8q logs --lines 50");
+        println!("  v8q doctor --verbose");
+        println!("  v8q debug report");
+    }
+    for warning in status.warnings {
+        println!("WARN: {warning}");
+    }
+}
+
+fn print_status_advanced(status: v8q::StatusInfo) {
     println!("V8Q Status\n");
     println!(
         "Recorder: {}",
@@ -264,15 +312,23 @@ fn print_status(status: v8q::StatusInfo) {
     if let Some(error) = status.error {
         println!("ERROR: {error}");
     }
-    if !status.log_tail.is_empty() {
-        println!("\nLast wl-screenrec log:");
-        for line in status.log_tail {
-            println!("  {line}");
-        }
-    }
     if !status.last_error_lines.is_empty() {
         println!("\nRecent relevant log lines:");
         for line in status.last_error_lines {
+            println!("  {line}");
+        }
+    }
+    if !status.log_tail.is_empty() {
+        println!("\nLast wl-screenrec log:");
+        for line in status
+            .log_tail
+            .into_iter()
+            .rev()
+            .take(10)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+        {
             println!("  {line}");
         }
     }
@@ -518,22 +574,38 @@ fn handle_logs(
         for file in files {
             command.arg(file);
         }
-        let status = command.status().context("failed to run tail -f")?;
-        if !status.success() {
-            anyhow::bail!("tail -f failed");
+        command.stdout(Stdio::piped());
+        let mut child = command.spawn().context("failed to run tail -f")?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("tail -f did not expose stdout"))?;
+        for line in BufReader::new(stdout).lines() {
+            println!("{}", v8q::replay::strip_ansi(&line?));
         }
         return Ok(());
     }
+    let mut printed_any = false;
     for file in files {
         if file.exists() {
-            let output = ProcessCommand::new("tail")
-                .arg("-n")
-                .arg(lines.to_string())
-                .arg(&file)
-                .output()
-                .with_context(|| format!("failed to read {}", file.display()))?;
+            let lines = tail_file_clean(&file, lines)?;
             println!("\n{}:", file.display());
-            print!("{}", String::from_utf8_lossy(&output.stdout));
+            if let Some(error) = v8q::replay::last_relevant_log_error(
+                lines.iter().map(String::as_str).collect::<Vec<_>>(),
+            ) {
+                println!("Last relevant error:");
+                println!("  {error}\n");
+            }
+            for line in lines {
+                println!("{line}");
+            }
+            printed_any = true;
+        }
+    }
+    if !printed_any {
+        println!("No log files found. Looked in:");
+        for file in log_files(backend.as_deref()) {
+            println!("  {}", file.display());
         }
     }
     Ok(())
@@ -607,20 +679,36 @@ fn handle_clip(command: ClipCommand, config: &v8q::Config) -> Result<()> {
             ensure_clip_in_output(config, &path, true)?;
             let metadata = std::fs::metadata(&path)?;
             println!("Path: {}", path.display());
-            println!("Size: {} bytes", metadata.len());
+            println!("Size: {}", format_size(metadata.len()));
             if let Ok(modified) = metadata.modified() {
                 println!("Modified: {:?}", modified);
             }
             match ffprobe_clip(&path) {
                 Ok(Some(info)) => {
-                    println!("Duration: {:.3}s", info.duration.unwrap_or(0.0));
                     println!(
-                        "Codec: {}",
+                        "Duration: {}",
+                        info.duration
+                            .map(format_duration)
+                            .unwrap_or_else(|| "unknown".to_string())
+                    );
+                    println!(
+                        "Container: {}",
+                        info.container.unwrap_or_else(|| "unknown".to_string())
+                    );
+                    println!(
+                        "Video codec: {}",
                         info.codec.unwrap_or_else(|| "unknown".to_string())
                     );
                     if let (Some(width), Some(height)) = (info.width, info.height) {
                         println!("Resolution: {width}x{height}");
                     }
+                    println!(
+                        "FPS: {}",
+                        info.fps
+                            .map(|fps| format!("{fps:.3}"))
+                            .unwrap_or_else(|| "unknown".to_string())
+                    );
+                    println!("Audio: {}", if info.audio_present { "yes" } else { "no" });
                     if let Some(level) = info.level {
                         println!("Level: {level}");
                     }
@@ -675,9 +763,12 @@ struct ClipSummary {
 #[derive(Debug)]
 struct ProbeInfo {
     duration: Option<f64>,
+    container: Option<String>,
     codec: Option<String>,
     width: Option<u64>,
     height: Option<u64>,
+    fps: Option<f64>,
+    audio_present: bool,
     level: Option<u64>,
     has_b_frames: Option<u64>,
 }
@@ -714,7 +805,7 @@ fn ffprobe_clip(path: &Path) -> Result<Option<ProbeInfo>> {
             "-v",
             "error",
             "-show_entries",
-            "format=duration:stream=codec_name,width,height,level,has_b_frames",
+            "format=duration,format_name:stream=codec_type,codec_name,width,height,avg_frame_rate,r_frame_rate,level,has_b_frames",
             "-of",
             "json",
         ])
@@ -724,34 +815,67 @@ fn ffprobe_clip(path: &Path) -> Result<Option<ProbeInfo>> {
     if !output.status.success() {
         anyhow::bail!("{}", String::from_utf8_lossy(&output.stderr));
     }
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    let stream = json
+    parse_ffprobe_json(&output.stdout).map(Some)
+}
+
+fn parse_ffprobe_json(bytes: &[u8]) -> Result<ProbeInfo> {
+    let json: serde_json::Value = serde_json::from_slice(bytes)?;
+    let streams = json
         .get("streams")
         .and_then(|streams| streams.as_array())
-        .and_then(|streams| streams.first());
-    Ok(Some(ProbeInfo {
+        .cloned()
+        .unwrap_or_default();
+    let video_stream = streams.iter().find(|stream| {
+        stream
+            .get("codec_type")
+            .and_then(|value| value.as_str())
+            .unwrap_or("video")
+            == "video"
+    });
+    let audio_present = streams.iter().any(|stream| {
+        stream
+            .get("codec_type")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            == "audio"
+    });
+    Ok(ProbeInfo {
         duration: json
             .get("format")
             .and_then(|format| format.get("duration"))
             .and_then(|duration| duration.as_str())
             .and_then(|duration| duration.parse::<f64>().ok()),
-        codec: stream
+        container: json
+            .get("format")
+            .and_then(|format| format.get("format_name"))
+            .and_then(|value| value.as_str())
+            .map(ToString::to_string),
+        codec: video_stream
             .and_then(|stream| stream.get("codec_name"))
             .and_then(|codec| codec.as_str())
             .map(ToString::to_string),
-        width: stream
+        width: video_stream
             .and_then(|stream| stream.get("width"))
             .and_then(|width| width.as_u64()),
-        height: stream
+        height: video_stream
             .and_then(|stream| stream.get("height"))
             .and_then(|height| height.as_u64()),
-        level: stream
+        fps: video_stream
+            .and_then(|stream| {
+                stream
+                    .get("r_frame_rate")
+                    .or_else(|| stream.get("avg_frame_rate"))
+            })
+            .and_then(|value| value.as_str())
+            .and_then(parse_fraction),
+        audio_present,
+        level: video_stream
             .and_then(|stream| stream.get("level"))
             .and_then(|level| level.as_u64()),
-        has_b_frames: stream
+        has_b_frames: video_stream
             .and_then(|stream| stream.get("has_b_frames"))
             .and_then(|frames| frames.as_u64()),
-    }))
+    })
 }
 
 fn reveal_path(path: &Path) -> Result<()> {
@@ -763,6 +887,39 @@ fn reveal_path(path: &Path) -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("path has no parent: {}", path.display()))?
     };
     v8q::open_path(dir)
+}
+
+fn parse_fraction(value: &str) -> Option<f64> {
+    let (num, den) = value.split_once('/')?;
+    let num = num.parse::<f64>().ok()?;
+    let den = den.parse::<f64>().ok()?;
+    (den != 0.0).then_some(num / den)
+}
+
+fn format_duration(seconds: f64) -> String {
+    if seconds < 60.0 {
+        format!("{seconds:.3}s")
+    } else {
+        let minutes = (seconds / 60.0).floor();
+        let rest = seconds - minutes * 60.0;
+        format!("{minutes:.0}m {rest:.3}s")
+    }
+}
+
+fn format_size(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    let bytes_f = bytes as f64;
+    if bytes_f >= GIB {
+        format!("{:.2} GiB ({} bytes)", bytes_f / GIB, bytes)
+    } else if bytes_f >= MIB {
+        format!("{:.2} MiB ({} bytes)", bytes_f / MIB, bytes)
+    } else if bytes_f >= KIB {
+        format!("{:.2} KiB ({} bytes)", bytes_f / KIB, bytes)
+    } else {
+        format!("{bytes} bytes")
+    }
 }
 
 fn handle_setup(command: Option<SetupCommand>, config: &v8q::Config) -> Result<()> {
@@ -1744,6 +1901,19 @@ fn log_files(backend: Option<&str>) -> Vec<PathBuf> {
     }
 }
 
+fn tail_file_clean(path: &Path, lines: usize) -> Result<Vec<String>> {
+    let contents = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    let mut tail = contents
+        .lines()
+        .rev()
+        .take(lines)
+        .map(v8q::replay::strip_ansi)
+        .collect::<Vec<_>>();
+    tail.reverse();
+    Ok(tail)
+}
+
 fn clean_logs(_older_than: Option<&str>) -> Result<usize> {
     let dir = v8q::paths::logs_dir();
     if !dir.exists() {
@@ -1775,5 +1945,46 @@ mod tests {
         assert!(lines.contains(&"flag_--history: true".to_string()));
         assert!(lines.contains(&"flag_--geometry: true".to_string()));
         assert!(lines.contains(&"flag_--max-fps: false".to_string()));
+    }
+
+    #[test]
+    fn formats_duration_and_size_for_humans() {
+        assert_eq!(super::format_duration(10.25), "10.250s");
+        assert_eq!(super::format_duration(65.5), "1m 5.500s");
+        assert_eq!(super::format_size(42), "42 bytes");
+        assert_eq!(super::format_size(2048), "2.00 KiB (2048 bytes)");
+    }
+
+    #[test]
+    fn parses_ffprobe_json_with_video_and_audio() {
+        let json = br#"{
+          "streams": [
+            {"codec_type":"audio","codec_name":"aac"},
+            {"codec_type":"video","codec_name":"h264","width":1920,"height":1080,"r_frame_rate":"60/1","avg_frame_rate":"120/1","level":52,"has_b_frames":0}
+          ],
+          "format": {"duration":"10.500000","format_name":"matroska,webm"}
+        }"#;
+        let info = super::parse_ffprobe_json(json).unwrap();
+        assert_eq!(info.duration, Some(10.5));
+        assert_eq!(info.container.as_deref(), Some("matroska,webm"));
+        assert_eq!(info.codec.as_deref(), Some("h264"));
+        assert_eq!(info.width, Some(1920));
+        assert_eq!(info.height, Some(1080));
+        assert_eq!(info.fps, Some(60.0));
+        assert!(info.audio_present);
+        assert_eq!(info.has_b_frames, Some(0));
+    }
+
+    #[test]
+    fn parses_ffprobe_json_without_video_stream() {
+        let json = br#"{
+          "streams": [{"codec_type":"audio","codec_name":"aac"}],
+          "format": {"duration":"2.000000","format_name":"matroska,webm"}
+        }"#;
+        let info = super::parse_ffprobe_json(json).unwrap();
+        assert_eq!(info.duration, Some(2.0));
+        assert_eq!(info.codec, None);
+        assert_eq!(info.width, None);
+        assert!(info.audio_present);
     }
 }

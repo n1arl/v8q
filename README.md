@@ -548,9 +548,19 @@ v8q service install
 v8q service enable
 v8q service start
 v8q service status
+v8q service stop
+v8q service disable
 ```
 
-The user service is written to `~/.config/systemd/user/v8q.service` and uses `v8q start --foreground`.
+The user service is written to `~/.config/systemd/user/v8q.service` and uses `v8q start --foreground`. It does not use `sudo`.
+
+View service logs with:
+
+```bash
+journalctl --user -u v8q.service -f
+```
+
+Wayland capture depends on the graphical user session. If the service starts before Hyprland, portals, or PipeWire are ready, use manual `v8q start` first and check `v8q debug report`.
 
 ## X11 Fallback
 
