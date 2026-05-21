@@ -1,0 +1,9 @@
+/target/
+**/*.rs.bk
+*.log
+*.pid
+*.pid.meta
+*.lock
+*.mkv
+/.env
+/.DS_Store

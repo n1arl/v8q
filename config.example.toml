@@ -1,0 +1,92 @@
+[recording]
+duration_seconds = 30
+segment_seconds = 2
+fps = 60
+width = 1920
+height = 1080
+encoder = "h264_nvenc"
+video_bitrate = "20M"
+audio_codec = "aac"
+
+[paths]
+buffer_dir = "/tmp/v8q-buffer"
+output_dir = "~/Videos/V8Q"
+pid_file = "/tmp/v8q.pid"
+
+[capture]
+backend = "wl-screenrec"
+
+[capture.window]
+enabled = false
+title = ""
+class = ""
+address = ""
+geometry = ""
+follow = false
+
+[ffmpeg]
+custom_record_command = ""
+extra_args = []
+
+[wl_screenrec]
+capture_mode = "output"
+auto_select_focused_output = true
+output = ""
+geometry = ""
+audio = true
+audio_device = "default"
+audio_backend = "pulse"
+ffmpeg_encoder = "h264_nvenc"
+ffmpeg_encoder_options = "preset=p5"
+bitrate = "20M"
+extra_args = []
+
+[ui]
+start_minimized = false
+close_to_tray = false
+show_notifications = true
+theme = "system"
+mode = "beginner"
+
+[notifications]
+enabled = true
+command = "notify-send"
+on_save = true
+on_error = true
+on_start = false
+on_stop = false
+
+# X11 fallback:
+#
+# [capture]
+# backend = "x11"
+
+# Custom FFmpeg command:
+#
+# [capture]
+# backend = "custom"
+#
+# [ffmpeg]
+# custom_record_command = "ffmpeg -y -f x11grab -framerate {fps} -video_size {width}x{height} -i :0.0 -f pulse -i default -c:v {encoder} -preset p5 -b:v {video_bitrate} -c:a {audio_codec} -f segment -segment_time {segment_seconds} -segment_wrap 18 -reset_timestamps 1 {buffer_dir}/seg_%06d.mkv"
+# extra_args = []
+
+# wl-screenrec without audio:
+#
+# [wl_screenrec]
+# audio = false
+
+# wl-screenrec recording a specific monitor:
+#
+# [wl_screenrec]
+# output = "DP-1"
+
+# wl-screenrec recording the active Hyprland window/program:
+#
+# [wl_screenrec]
+# capture_mode = "active-window"
+
+# wl-screenrec recording a fixed region:
+#
+# [wl_screenrec]
+# capture_mode = "geometry"
+# geometry = "1366,0 1920x1080"

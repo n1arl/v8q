@@ -1,0 +1,36 @@
+[package]
+name = "v8q"
+version = "0.3.0"
+edition = "2021"
+description = "Small replay buffer recorder for Linux desktops"
+license = "MIT"
+repository = "https://github.com/n1arl/v8q"
+readme = "README.md"
+keywords = ["linux", "wayland", "hyprland", "replay", "screen-recorder"]
+categories = ["command-line-utilities", "multimedia::video"]
+
+[dependencies]
+anyhow = "1.0"
+chrono = "0.4"
+clap = { version = "4.5", features = ["derive"] }
+ctrlc = "3.4"
+dirs = "5.0"
+gtk4 = { version = "0.11.3", optional = true }
+libadwaita = { version = "0.9.1", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+shell-words = "1.1"
+toml = "0.8"
+
+[features]
+default = []
+gui = ["dep:gtk4", "dep:libadwaita"]
+
+[[bin]]
+name = "v8q"
+path = "src/main.rs"
+
+[[bin]]
+name = "v8q-gui"
+path = "src/bin/v8q-gui.rs"
+required-features = ["gui"]
